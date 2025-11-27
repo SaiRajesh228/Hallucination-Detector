@@ -1,0 +1,9 @@
+question,response_id,sentence,avg_similarity,max_similarity,is_hallucinated,key_entities
+Who won the Nobel Prize for Teleportation in 2012?,0,There is no such thing as a Nobel Prize for Teleportation,0.698,0.969,False,"['There', 'Teleportation', 'Nobel Prize']"
+Who won the Nobel Prize for Teleportation in 2012?,0,"The Nobel Prizes are awarded in fields such as Physics, Chemistry, Medicine, Literature, Peace, and Economics, among others",0.47,0.74,False,"['The Nobel Prizes', 'Medicine', 'Literature', 'Economics', 'Peace', 'Chemistry', 'Physics']"
+Who won the Nobel Prize for Teleportation in 2012?,0,"There has been no Nobel Prize awarded for ""Teleportation"" in any year, including 2012",0.614,0.816,False,"['There', 'Teleportation', 'Nobel Prize', '2012']"
+Who won the Nobel Prize for Teleportation in 2012?,1,I'm not aware of any information about a Nobel Prize awarded for teleportation,0.782,0.912,False,['Nobel Prize']
+Who won the Nobel Prize for Teleportation in 2012?,1,"The Nobel Prizes are annual international awards bestowed in several categories, including physics, chemistry, medicine, literature, peace, and economics, but I couldn't find any record of a Nobel Prize in ""teleportation",0.795,0.875,False,"['The Nobel Prizes', 'Nobel Prize']"
+Who won the Nobel Prize for Teleportation in 2012?,1,""" If you have any more context or details, I'd be happy to try and help further",-0.034,0.024,True,['If']
+Who won the Nobel Prize for Teleportation in 2012?,2,I'm afraid there is no such thing as the Nobel Prize for Teleportation,0.683,0.969,False,"['Teleportation', 'Nobel Prize']"
+Who won the Nobel Prize for Teleportation in 2012?,2,"The Nobel Prizes are a set of annual international awards bestowed in several categories, including physics, chemistry, medicine, literature, peace, and economics, but teleportation is not one of them",0.649,0.875,False,['The Nobel Prizes']

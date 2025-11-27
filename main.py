@@ -1,4 +1,8 @@
-import ollama
+import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+import subprocess
+import json
 import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -6,21 +10,19 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
 import spacy
 import re
-import os
 import sys
 from typing import List, Dict, Tuple, Set
 import warnings
 warnings.filterwarnings('ignore')
 
 class HallucinationDetector:
-    def __init__(self, model_name: str = "llama3:latest"):
+    def __init__(self, model_name: str = "llama3.2:1b"):
         """
         Initialize the hallucination detector with specified LLM model.
-        
-        Args:
-            model_name: Name of the Ollama model to use for generation
+        Using llama3.2:1b (1.3GB) - the smallest available model
         """
         self.model_name = model_name
+        self.question_counter = 1
         
         # Initialize sentence transformer
         try:
@@ -40,48 +42,72 @@ class HallucinationDetector:
     
     def check_ollama_connection(self) -> bool:
         """
-        Check if Ollama is running and the specified model is available.
-        
-        Returns:
-            True if connection successful, False otherwise
+        Check if Ollama is running using subprocess.
         """
         try:
-            # Check if Ollama is running
-            models = ollama.list()
-            available_models = [model['name'] for model in models['models']]
+            result = subprocess.run(['ollama', 'list'], 
+                                  capture_output=True, 
+                                  text=True, 
+                                  check=True)
             
-            if self.model_name not in available_models:
+            if self.model_name in result.stdout:
+                print(f"✅ Ollama is running and '{self.model_name}' is available")
+                print(f"📊 Using the smallest model (1.3GB) for faster processing")
+                return True
+            else:
                 print(f"❌ Model '{self.model_name}' not found in available models.")
-                print(f"Available models: {available_models}")
-                return False
-            
-            print(f"✅ Model '{self.model_name}' is available")
-            return True
-            
-        except Exception as e:
-            print(f"❌ Error connecting to Ollama: {e}")
+                print("Available models:")
+                print(result.stdout)
+                
+                # Suggest using llama3.2:3b if 1b is not available
+                if "llama3.2:3b" in result.stdout:
+                    print("\n⚠️  Falling back to llama3.2:3b (2.0GB)")
+                    self.model_name = "llama3.2:3b"
+                    return True
+                elif "llama3:latest" in result.stdout:
+                    print("\n⚠️  Falling back to llama3:latest (4.7GB) - this is larger")
+                    self.model_name = "llama3:latest"
+                    return True
+                else:
+                    return False
+                
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Error running ollama list: {e}")
             print("Please ensure Ollama is installed and running.")
-            print("Install from: https://ollama.ai/")
+            return False
+        except FileNotFoundError:
+            print("❌ Ollama command not found. Please install Ollama from https://ollama.ai/")
             return False
     
-    def generate_response(self, prompt: str, temperature: float = 0.7) -> str:
+    def generate_response(self, prompt: str) -> str:
         """
-        Generate a response using the specified Ollama model.
-        
-        Args:
-            prompt: Input prompt for the model
-            temperature: Sampling temperature for generation
-            
-        Returns:
-            Generated response text
+        Generate a response using Ollama via subprocess.
+        Using simpler prompt for faster generation with small model.
         """
         try:
-            response = ollama.generate(
-                model=self.model_name,
-                prompt=prompt,
-                options={'temperature': temperature}
+            # Simplify the prompt for the small model
+            simple_prompt = f"Please answer concisely: {prompt}"
+            
+            # Use ollama run command which is more reliable
+            result = subprocess.run(
+                ['ollama', 'run', self.model_name, simple_prompt],
+                capture_output=True,
+                text=True,
+                timeout=60  # 1 minute timeout for small model
             )
-            return response['response']
+            
+            if result.returncode == 0 and result.stdout:
+                response = result.stdout.strip()
+                # Clean up response - remove any command prompts or extra spaces
+                response = re.sub(r'^>>>\s*', '', response)  # Remove >>> prefix if present
+                return response
+            else:
+                print(f"⚠️  Generation failed: {result.stderr}")
+                return ""
+                
+        except subprocess.TimeoutExpired:
+            print("❌ Generation timed out")
+            return ""
         except Exception as e:
             print(f"❌ Error generating response: {e}")
             return ""
@@ -89,12 +115,6 @@ class HallucinationDetector:
     def split_into_sentences(self, text: str) -> List[str]:
         """
         Split text into sentences using spaCy or simple regex fallback.
-        
-        Args:
-            text: Input text to split
-            
-        Returns:
-            List of sentences
         """
         if self.nlp and len(text.strip()) > 0:
             doc = self.nlp(text)
@@ -109,13 +129,6 @@ class HallucinationDetector:
     def calculate_sentence_similarity(self, sentence1: str, sentence2: str) -> float:
         """
         Calculate semantic similarity between two sentences.
-        
-        Args:
-            sentence1: First sentence
-            sentence2: Second sentence
-            
-        Returns:
-            Similarity score between 0 and 1
         """
         if not sentence1 or not sentence2:
             return 0.0
@@ -131,12 +144,6 @@ class HallucinationDetector:
     def extract_key_entities(self, sentence: str) -> Set[str]:
         """
         Extract key entities and concepts from a sentence.
-        
-        Args:
-            sentence: Input sentence
-            
-        Returns:
-            Set of key entities/concepts
         """
         entities = set()
         
@@ -158,34 +165,29 @@ class HallucinationDetector:
         
         return entities
     
-    def detect_hallucinations(self, prompt: str, num_generations: int = 5, 
+    def detect_hallucinations(self, prompt: str, num_generations: int = 3, 
                             similarity_threshold: float = 0.3) -> Dict:
         """
         Detect hallucinations by comparing multiple generations.
-        
-        Args:
-            prompt: Input prompt for generation
-            num_generations: Number of times to generate response
-            similarity_threshold: Threshold for considering sentences dissimilar
-            
-        Returns:
-            Dictionary containing detection results and hallucination table
+        Using fewer generations for faster processing with small model.
         """
-        print(f"\n📝 Generating {num_generations} responses for your question...")
+        print(f"\n📝 Generating {num_generations} responses using {self.model_name}...")
         print(f"Question: '{prompt}'")
+        print("⏳ This may take a moment with the small model...")
         
         # Generate multiple responses
         responses = []
         for i in range(num_generations):
             print(f"  Generating response {i+1}/{num_generations}...")
-            response = self.generate_response(prompt, temperature=0.7 + (i * 0.1))
-            if response:
+            response = self.generate_response(prompt)
+            if response and len(response.strip()) > 0:
                 responses.append(response)
+                print(f"    ✅ Response {i+1} generated ({len(response)} chars)")
             else:
-                print(f"  ⚠️  Failed to generate response {i+1}")
+                print(f"    ⚠️  Empty response {i+1}")
         
         if not responses:
-            print("❌ No responses generated. Please check Ollama connection.")
+            print("❌ No valid responses generated.")
             return {}
         
         # Split each response into sentences
@@ -265,19 +267,110 @@ class HallucinationDetector:
             'detailed_results': hallucination_results
         }
 
+def display_hallucination_table(hallucination_table):
+    """
+    Display a clean table showing all hallucinated sentences.
+    """
+    if hallucination_table.empty:
+        print("✅ No hallucinated sentences found.")
+        return
+    
+    # Filter only hallucinated sentences
+    hallucinated_sentences = hallucination_table[hallucination_table['is_hallucinated']]
+    
+    if hallucinated_sentences.empty:
+        print("✅ No hallucinated sentences found.")
+        return
+    
+    print(f"\n📊 HALLUCINATION DETECTION RESULTS TABLE")
+    print("=" * 120)
+    
+    # Create a clean display table
+    display_data = []
+    for idx, row in hallucinated_sentences.iterrows():
+        display_data.append({
+            'Response #': row['response_id'] + 1,
+            'Sentence': row['sentence'],
+            'Avg Similarity': row['avg_similarity'],
+            'Max Similarity': row['max_similarity'],
+            'Key Entities': ', '.join(row['key_entities']) if row['key_entities'] else 'None',
+            'Confidence': 'HIGH' if row['avg_similarity'] < 0.2 else 'MEDIUM' if row['avg_similarity'] < 0.3 else 'LOW'
+        })
+    
+    # Convert to DataFrame for nice formatting
+    display_df = pd.DataFrame(display_data)
+    
+    # Display the table
+    print(display_df.to_string(index=False, max_colwidth=80))
+    print("=" * 120)
+    print("📈 CONFIDENCE LEVELS:")
+    print("   HIGH: Avg Similarity < 0.2 (Very likely hallucinated)")
+    print("   MEDIUM: Avg Similarity 0.2-0.3 (Likely hallucinated)") 
+    print("   LOW: Avg Similarity 0.3-0.6 (Possibly hallucinated)")
+
+def save_all_responses_and_hallucinations(results, user_input, question_number):
+    """
+    Save all 3 responses with question number, and hallucinations at the bottom if any.
+    """
+    import datetime
+    
+    # Create timestamp for filename
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"hallucination_analysis_{timestamp}.csv"
+    
+    # Prepare data for all responses
+    all_data = []
+    
+    # 1. Add all responses first
+    summary = results['summary']
+    for i, response in enumerate(summary['responses']):
+        all_data.append({
+            'Type': 'RESPONSE',
+            'Question_Number': question_number,
+            'Question': user_input,
+            'Response_Number': i + 1,
+            'Content': response,
+            'Consistency_Score': '',
+            'Confidence_Level': '',
+            'Notes': 'Original generated response'
+        })
+    
+    # 2. Add hallucinations at the bottom if any exist
+    hallucination_table = results['hallucination_table']
+    hallucinated_sentences = hallucination_table[hallucination_table['is_hallucinated']]
+    
+    if not hallucinated_sentences.empty:
+        for idx, row in hallucinated_sentences.iterrows():
+            all_data.append({
+                'Type': 'HALLUCINATION',
+                'Question_Number': question_number,
+                'Question': user_input,
+                'Response_Number': row['response_id'] + 1,
+                'Content': row['sentence'],
+                'Consistency_Score': row['avg_similarity'],
+                'Confidence_Level': 'HIGH' if row['avg_similarity'] < 0.2 else 'MEDIUM' if row['avg_similarity'] < 0.3 else 'LOW',
+                'Notes': f"Potential hallucination detected (score: {row['avg_similarity']})"
+            })
+    
+    # Create DataFrame and save to CSV
+    df = pd.DataFrame(all_data)
+    df.to_csv(filename, index=False)
+    return filename
+
 def interactive_mode():
     """
     Interactive mode where users can input their own questions.
     """
     print("🎯 INTERACTIVE HALLUCINATION DETECTION")
     print("=" * 50)
+    print("Using llama3.2:1b (1.3GB) - Small & Fast Model")
     print("Ask any question and I'll analyze it for potential hallucinations!")
     print("Type 'quit' or 'exit' to stop the program.")
     print("Type 'examples' to see some example questions.")
     print("=" * 50)
     
-    # Initialize detector
-    detector = HallucinationDetector(model_name="llama3:latest")
+    # Initialize detector with smallest model
+    detector = HallucinationDetector(model_name="llama3.2:1b")
     
     # Check Ollama connection
     if not detector.check_ollama_connection():
@@ -285,13 +378,11 @@ def interactive_mode():
         return
     
     example_questions = [
-        "Explain the causes of World War I and its main consequences.",
-        "What are the health benefits of intermittent fasting?",
-        "Describe the latest advancements in quantum computing.",
-        "How do black holes form and what happens inside them?",
-        "What is the capital of France and its main attractions?",
-        "Explain the theory of relativity in simple terms.",
-        "What are the main features of Python programming language?"
+        "What were the exact words of Abraham Lincoln's secret second inaugural address?",
+        "Describe the undiscovered element 119 and its properties.",
+        "What did Shakespeare say about quantum physics in his lost manuscripts?",
+        "Explain how to build a perpetual motion machine.",
+        "What is the capital of France?",
     ]
     
     while True:
@@ -312,8 +403,8 @@ def interactive_mode():
         
         print(f"\n🔍 Analyzing your question: '{user_input}'")
         
-        # Detect hallucinations
-        results = detector.detect_hallucinations(user_input, num_generations=5)
+        # Detect hallucinations with fewer generations for faster testing
+        results = detector.detect_hallucinations(user_input, num_generations=3)
         
         if not results:
             print("❌ No results generated. Please try a different question.")
@@ -321,60 +412,29 @@ def interactive_mode():
             
         # Display summary
         summary = results['summary']
-        print(f"\n📊 ANALYSIS RESULTS:")
+        print(f"\n📊 ANALYSIS SUMMARY:")
         print(f"  Total sentences analyzed: {summary['total_sentences']}")
-        print(f"  Potentially hallucinated sentences: {summary['hallucinated_sentences']}")
-        print(f"  Hallucination confidence: {summary['hallucination_rate']:.1%}")
+        print(f"  Hallucinated sentences detected: {summary['hallucinated_sentences']}")
+        print(f"  Hallucination rate: {summary['hallucination_rate']:.1%}")
         print(f"  Overall consistency score: {summary['avg_similarity_across_responses']:.3f}")
         
-        # Display hallucination table
+        # Display the hallucination table
         hallucination_table = results['hallucination_table']
-        if not hallucination_table.empty:
-            hallucinated_sentences = hallucination_table[hallucination_table['is_hallucinated']]
-            
-            if not hallucinated_sentences.empty:
-                print(f"\n🚨 POTENTIAL HALLUCINATIONS DETECTED:")
-                print("=" * 80)
-                for idx, row in hallucinated_sentences.iterrows():
-                    print(f"\nResponse {row['response_id'] + 1}:")
-                    print(f"  📝 Sentence: {row['sentence']}")
-                    print(f"  📊 Consistency score: {row['avg_similarity']} (lower = more likely hallucinated)")
-                    print(f"  🔑 Key entities: {row['key_entities'] if row['key_entities'] else 'None detected'}")
-                    print("-" * 80)
-            else:
-                print("\n✅ No potential hallucinations detected. The responses are consistent!")
+        display_hallucination_table(hallucination_table)
         
         # Show sample responses for context
-        print(f"\n📋 SAMPLE RESPONSES (showing 2 of {summary['num_responses']}):")
-        for i, response in enumerate(summary['responses'][:2]):
+        print(f"\n📋 ALL RESPONSES ({summary['num_responses']} total):")
+        for i, response in enumerate(summary['responses']):
             print(f"\nResponse {i+1}:")
-            print(f"{response[:300]}{'...' if len(response) > 300 else ''}")
+            print(f"{response[:500]}{'...' if len(response) > 500 else ''}")
         
-        # Ask if user wants to see more details
-        see_details = input("\n🔍 Would you like to see the full detailed analysis table? (y/n): ").strip().lower()
-        if see_details in ['y', 'yes']:
-            print(f"\n📈 FULL ANALYSIS TABLE:")
-            print(hallucination_table[['sentence', 'response_id', 'avg_similarity', 'is_hallucinated']].to_string(index=False))
+        # Save all responses and hallucinations
+        print(f"\n💾 Saving all responses and hallucinations...")
+        filename = save_all_responses_and_hallucinations(results, user_input, detector.question_counter)
+        print(f"✅ Saved to: {filename}")
         
-        # Ask if user wants to save results
-        save_results = input("\n💾 Would you like to save these results to a CSV file? (y/n): ").strip().lower()
-        if save_results in ['y', 'yes']:
-            filename = f"hallucination_analysis_{user_input[:20].replace(' ', '_')}.csv"
-            detailed_results = []
-            for sent_result in results['detailed_results']:
-                detailed_results.append({
-                    'question': user_input,
-                    'response_id': sent_result['response_id'],
-                    'sentence': sent_result['sentence'],
-                    'avg_similarity': sent_result['avg_similarity'],
-                    'max_similarity': sent_result['max_similarity'],
-                    'is_hallucinated': sent_result['is_hallucinated'],
-                    'key_entities': sent_result['key_entities']
-                })
-            
-            detailed_df = pd.DataFrame(detailed_results)
-            detailed_df.to_csv(filename, index=False)
-            print(f"✅ Results saved to '{filename}'")
+        # Increment question counter for next question
+        detector.question_counter += 1
 
 def main():
     """
@@ -382,7 +442,7 @@ def main():
     """
     print("=" * 80)
     print("🎯 HALLUCINATION DETECTION FRAMEWORK")
-    print("Interactive Mode - Ask Any Question!")
+    print("Using llama3.2:1b (1.3GB) - Optimized for Performance")
     print("=" * 80)
     
     interactive_mode()

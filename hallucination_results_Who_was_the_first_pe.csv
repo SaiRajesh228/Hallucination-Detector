@@ -1,0 +1,11 @@
+question,response_id,sentence,avg_similarity,max_similarity,is_hallucinated,key_entities
+Who was the first person to land on the Sun?,0,There have been no human missions to land on the Sun,0.45,0.837,False,"['There', 'Sun']"
+Who was the first person to land on the Sun?,0,"The closest any spacecraft has come is the Soviet Union's Venera program, which sent multiple probes to Venus and its extreme environment in the 1960s and 1970s",0.273,0.543,True,"['The', 'Soviet Union', 'Venus', 'Venera']"
+Who was the first person to land on the Sun?,0,"However, none of these missions were designed to land on the Sun or achieve a safe landing in its corona",0.398,0.639,False,"['Sun', 'However']"
+Who was the first person to land on the Sun?,1,There has not been a human landing on the Sun,0.603,0.845,False,"['There', 'Sun']"
+Who was the first person to land on the Sun?,1,"The closest any spacecraft has come to the Sun is NASA's Parker Solar Probe, launched in 2018, which has flown within about 15 million miles (24 million kilometers) of the Sun's surface",0.501,0.583,False,"['24', '15', 'Sun', 'The', '2018', 'Parker Solar Probe']"
+Who was the first person to land on the Sun?,1,"However, it did pass within about 1",0.109,0.162,True,"['1', 'However']"
+Who was the first person to land on the Sun?,1,5 million miles (2,0.161,0.202,True,"['5', '2']"
+Who was the first person to land on the Sun?,1,"4 million kilometers) of the Sun's corona, its outer atmosphere",0.327,0.418,False,"['4', 'Sun']"
+Who was the first person to land on the Sun?,2,There has never been a human or any other spacecraft that landed on the Sun,0.472,0.845,False,"['There', 'Sun']"
+Who was the first person to land on the Sun?,2,"The surface temperature of the Sun is about 5,500 degrees Celsius (10,000 degrees Fahrenheit), which is much too hot for any vehicle to survive without significant nuclear reactions occurring",0.328,0.459,False,"['5', 'Fahrenheit', '000', '10', 'Celsius', '500', 'Sun', 'The']"
